@@ -71,6 +71,13 @@ one-line pointer, keeping the main file current-state-only. Executed by
 Claude Sonnet 5 at high effort using this skill; no rule violations
 observed in the sessions since (trim dated 2026-07-19, watch ongoing).
 
+## Token footprint
+
+~175 tokens always-on (only the description loads until the skill fires) —
+measured with `claude plugin details claude-config-tune`; re-run it yourself,
+the numbers drift as the skill evolves. A config-hygiene skill that bloated
+your config would be refuting itself.
+
 ## Install
 
 As a plugin:
