@@ -114,4 +114,4 @@ disciplined delegation.
 
 ## License
 
-MIT © Dan Gaidula
+MIT © Danniel T. Gaidula
