@@ -96,3 +96,32 @@ behind it.
 template, their CLAUDE.md files should differ only on intended deltas.
 Report any other divergence; apply approved trims to all of them in
 lockstep.
+
+## Managed dotfiles (chezmoi & friends)
+
+Some targets are not real files but rendered copies a dotfile manager owns —
+editing them in place gets clobbered on the next sync and never reaches other
+machines. Before applying ANY edit to a global `CLAUDE.md` or `settings.json`,
+check whether it is managed:
+
+```bash
+command -v chezmoi >/dev/null && chezmoi source-path "<file>"
+```
+
+- **Resolves** → the file is chezmoi-managed. Edit the **source path it
+  prints**, not the live file; then run `chezmoi apply`, and tell the user to
+  commit + push in their dotfiles repo (you apply locally; they push).
+- **Non-zero / no chezmoi** → not managed; edit in place as usual.
+
+Two guards on the resolved source:
+
+- **Template** (path ends `.tmpl`): a Go template with `{{ … }}` directives.
+  Prose trims are fine, but never edit through a template directive — if a cut
+  lands near one, surface it and let the user make it.
+- **Private template** (`private_*.tmpl`, e.g. an encrypted settings file): do
+  NOT auto-edit — warn and defer to `chezmoi edit "<file>"`, which handles
+  decryption and re-encryption.
+
+`settings.local.json` (Mode 1's target) is normally machine-local and NOT
+managed — edit it in place. Per the git rule above, do not push; apply locally
+and hand the commit/push to the user.

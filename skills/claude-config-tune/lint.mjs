@@ -13,6 +13,8 @@
  *   node lint.mjs --ci <path>...               # exit 1 on DEFINITE issues (superseded /
  *                                              # wildcard-redundant); advisory never fails CI
  *   node lint.mjs --config tune.json <path>... # extend defaults with your own patterns
+ *   (a tune.json beside this script is auto-loaded when --config is omitted, so a
+ *    deployment can ship its site patterns as data without changing the invocation)
  *
  * Config file (all keys optional, additive to defaults):
  *   {
@@ -35,7 +37,8 @@
  *                     site-specific patterns
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // --- defaults (extend via --config) -------------------------------------------
 
@@ -57,8 +60,15 @@ const DEFAULT_SENSITIVE_SERVERS = [/gmail/, /google-workspace/, /composio/, /sla
 const argv = process.argv.slice(2);
 const ci = argv.includes('--ci');
 const configIdx = argv.indexOf('--config');
-const configPath = configIdx !== -1 ? argv[configIdx + 1] : null;
+let configPath = configIdx !== -1 ? argv[configIdx + 1] : null;
 const paths = argv.filter((a, i) => a !== '--ci' && a !== '--config' && (configIdx === -1 || i !== configIdx + 1));
+
+// If no --config was given, auto-load a tune.json sitting next to this script,
+// so a deployment can ship its site patterns as data without a wrapper.
+if (!configPath) {
+  const adjacent = join(dirname(fileURLToPath(import.meta.url)), 'tune.json');
+  if (existsSync(adjacent)) configPath = adjacent;
+}
 
 if (paths.length === 0) {
   console.error('usage: node lint.mjs [--ci] [--config tune.json] <project-dir-or-settings.json>...');
