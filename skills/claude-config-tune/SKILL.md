@@ -31,6 +31,14 @@ never fail. Add `--config tune.json` to extend the defaults with your own
 site-specific patterns, sensitive servers, and dangerous-command guards (see
 the header of `lint.mjs` for the schema).
 
+If the config sets **`reviewReport`** (a path to a prior review report, or a
+directory of dated ones), the linter prints that report's latest **verdict** at
+the top of the run — so a `CHANGES RECOMMENDED` / `BLOCKING` review from an
+upstream check (e.g. a toolchain-update routine) gets addressed alongside the
+tune instead of sitting unread. Note config-tune's own scope is the allow-list
++ CLAUDE.md; a report may recommend things beyond that (auto-mode, hooks,
+settings) — surface those to the user, don't silently skip them.
+
 What it flags:
 
 - **superseded** — a narrow `Bash(...)` already covered by a broader

@@ -20,7 +20,11 @@
  *   {
  *     "siteSpecific":     ["regex", ...],   // entries EXPECTED to differ across projects
  *     "sensitiveServers": ["regex", ...],   // MCP servers never to wildcard-consolidate
- *     "pushGuards": [{ "glob": "git", "requireDenyPrefix": "git push", "why": "..." }]
+ *     "pushGuards": [{ "glob": "git", "requireDenyPrefix": "git push", "why": "..." }],
+ *     "reviewReport":     "path or dir"     // a prior review report (or a dir of dated
+ *                                           // ones); its latest verdict is surfaced at
+ *                                           // the top of the run so a non-CLEAN review
+ *                                           // gets addressed alongside the tune
  *   }
  *
  * Checks (per file):
@@ -36,7 +40,7 @@
  *   6. drift        — entries present in some files but not all, excluding
  *                     site-specific patterns
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -78,12 +82,14 @@ if (paths.length === 0) {
 let SITE_SPECIFIC = [...DEFAULT_SITE_SPECIFIC];
 let PUSH_GUARDS = [...DEFAULT_PUSH_GUARDS];
 let SENSITIVE_SERVERS = [...DEFAULT_SENSITIVE_SERVERS];
+let reviewReport = null;
 if (configPath) {
   try {
     const cfg = JSON.parse(readFileSync(resolve(configPath), 'utf8'));
     for (const s of cfg.siteSpecific ?? []) SITE_SPECIFIC.push(new RegExp(s));
     for (const s of cfg.sensitiveServers ?? []) SENSITIVE_SERVERS.push(new RegExp(s));
     for (const g of cfg.pushGuards ?? []) PUSH_GUARDS.push(g);
+    reviewReport = cfg.reviewReport ?? null;
   } catch (e) {
     console.error(`--config ${configPath}: ${e.message}`);
     process.exit(2);
@@ -137,6 +143,33 @@ function mcpParts(entry) {
   const parts = entry.split('__');
   if (parts.length < 3) return null;
   return { server: parts[1], tool: parts.slice(2).join('__') };
+}
+
+/** Expand a leading ~ to $HOME. */
+function expandHome(p) {
+  return p.startsWith('~') ? join(process.env.HOME ?? '', p.slice(1)) : p;
+}
+
+/**
+ * Resolve `reviewReport` (a report file, or a directory of dated reports) to the
+ * newest report and its verdict, for surfacing at the top of a run. Best-effort:
+ * returns null if nothing readable is found.
+ */
+function latestReview(spec) {
+  try {
+    const p = resolve(expandHome(spec));
+    let file = p;
+    if (statSync(p).isDirectory()) {
+      const md = readdirSync(p).filter((f) => f.endsWith('.md')).map((f) => join(p, f));
+      if (md.length === 0) return null;
+      file = md.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0];
+    }
+    const text = readFileSync(file, 'utf8');
+    const m = text.match(/Verdict:\s*([A-Z][A-Z ]*[A-Z])/);
+    return { file, verdict: m ? m[1].trim() : 'UNKNOWN' };
+  } catch {
+    return null;
+  }
 }
 
 const reports = [];
@@ -247,6 +280,18 @@ if (good.length >= 2) {
 // --- report -------------------------------------------------------------------
 const short = (f) => f.replace(process.env.HOME ?? '~', '~').replace(/\/.claude\/settings\.local\.json$/, '');
 let total = 0;
+
+// Surface the latest prior review verdict, if a reviewReport was configured, so a
+// non-CLEAN report gets addressed alongside this tune (advisory — never fails CI).
+if (reviewReport) {
+  const rv = latestReview(reviewReport);
+  if (rv) {
+    const line = `latest review: ${rv.verdict} — ${short(rv.file)}`;
+    console.log(/^CLEAN\b/.test(rv.verdict)
+      ? '\n' + C.dim('· ' + line)
+      : '\n' + C.yellow('⚠ ' + line) + C.dim('  — address its recommendations alongside this tune'));
+  }
+}
 
 for (const r of reports) {
   console.log('\n' + C.bold(short(r.file)));
