@@ -63,7 +63,7 @@ test('--brief snapshot: one line per finding, then the summary and next lines', 
     '⚠ warn   one-off? Bash(sed -n 1,20p /tmp/x.txt) ~/every  (looks single-use)',
     '⚠ warn   push-guard Bash(git *)                 ~/every  (no deny on git push: a broad git glob auto-approves pushes; keep pushes behind an explicit prompt)',
     'summary: ok=0 warn=4 skip=1 refuse=0 fail=2',
-    'next: ask  (propose edits for the 6 findings to the user; change nothing until they approve)',
+    'next: ask  (propose edits for the 6 settings findings to the user; change nothing until they approve)',
   ]);
   assert.equal(r.stderr, '');
   assert.equal(r.status, 1);
@@ -92,7 +92,7 @@ test('--json snapshot: clean files and a drift entry, with next as the object', 
     summary: { ok: 2, warn: 1, skip: 0, refuse: 0, fail: 0 },
     next: {
       action: 'ask', who: 'human', argv: null, afterSeconds: null,
-      why: 'propose edits for the 1 finding to the user; change nothing until they approve', cwd: home,
+      why: 'propose edits for the 1 settings finding to the user; change nothing until they approve', cwd: home,
     },
   });
   assert.equal(r.status, 1);
@@ -115,7 +115,7 @@ test('human mode: a block per item, and next as the last line', () => withHome((
   const r = run(home, ['every']);
   const out = lines(r.stdout);
   assert.deepEqual(out.slice(0, 3), ['✗ ~/every', '    superseded Bash(git status)', '    fail: covered by Bash(git *)']);
-  assert.equal(out.at(-1), 'next: your call  (propose edits for the 6 findings to the user; change nothing until they approve)');
+  assert.equal(out.at(-1), 'next: your call  (propose edits for the 6 settings findings to the user; change nothing until they approve)');
   assert.equal(r.status, 1);
 }));
 
@@ -124,7 +124,7 @@ test('--quiet: only the summary line and the next line', () => withHome((home) =
   const r = run(home, ['--quiet', 'every']);
   assert.deepEqual(lines(r.stdout), [
     'summary: ok=0 warn=4 skip=1 refuse=0 fail=2',
-    'next: ask  (propose edits for the 6 findings to the user; change nothing until they approve)',
+    'next: ask  (propose edits for the 6 settings findings to the user; change nothing until they approve)',
   ]);
   assert.equal(r.status, 1);
 }));
@@ -153,6 +153,40 @@ test('a path with no settings file refuses; invalid JSON fails and next is stop'
   assert.equal(invalid.status, 1);
 }));
 
+test('a refuse-only run names the missing file and the remedy, not edits', () => withHome((home) => {
+  const r = run(home, ['--json', 'nowhere']);
+  const { next } = JSON.parse(r.stdout);
+  assert.equal(next.action, 'ask');
+  assert.doesNotMatch(next.why, /propose edits/);
+  assert.equal(next.why, 'no settings file at ~/nowhere/.claude/settings.local.json: re-run with a project dir or a settings .json file');
+  project(home, 'every', EVERY);
+  const mixed = run(home, ['--brief', 'every', 'nowhere']);
+  assert.match(mixed.stdout, /^next: ask {2}\(propose edits for the 6 settings findings; no settings file at ~\/nowhere\/\.claude\/settings\.local\.json: re-run with/m);
+}));
+
+test('valid JSON of the wrong shape fails, naming the key, and next is stop', () => withHome((home) => {
+  for (const [name, permissions, reason] of [
+    ['str', { allow: 'Bash(ls *)' }, 'permissions.allow is not an array'],
+    ['num', { allow: ['Bash(ls *)'], deny: [42] }, 'permissions.deny[0] is not a string'],
+  ]) {
+    project(home, name, permissions);
+    const r = run(home, ['--json', name]);
+    const out = JSON.parse(r.stdout);
+    assert.equal(r.status, 1, name);
+    assert.deepEqual(out.items.map((it) => [it.verdict, it.data.check, it.reason]), [['fail', 'invalid', reason]]);
+    assert.equal(out.next.action, 'stop');
+  }
+}));
+
+test('the global local settings file is shown whole, never as a bare ~', () => withHome((home) => {
+  mkdirSync(path.join(home, '.claude'));
+  writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls *)', 'Bash(npm test)'], deny: [] } }));
+  writeFileSync(path.join(home, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ls *)'], deny: [] } }));
+  const r = run(home, ['--brief', '.claude/settings.json', '.claude/settings.local.json']);
+  assert.match(r.stdout, /^✓ ok {5}clean \(1 allow, 0 deny\) {16}~\/\.claude\/settings\.local\.json$/m);
+  assert.match(r.stdout, /\(missing from ~\/\.claude\/settings\.local\.json\)$/m);
+}));
+
 test('--ci is still accepted, and changes nothing', () => withHome((home) => {
   project(home, 'every', EVERY);
   const plain = run(home, ['--brief', 'every']);
@@ -163,7 +197,7 @@ test('--ci is still accepted, and changes nothing', () => withHome((home) => {
 
 test('usage errors exit 2 with nothing on stdout', () => withHome((home) => {
   project(home, 'tidy', CLEAN);
-  for (const args of [[], ['--brief', '--json', 'tidy'], ['--go', 'tidy'], ['--config']]) {
+  for (const args of [[], ['--brief', '--json', 'tidy'], ['--quiet', '--json', 'tidy'], ['--go', 'tidy'], ['--config']]) {
     const r = run(home, args);
     assert.equal(r.status, 2, `args: ${args.join(' ')}`);
     assert.equal(r.stdout, '');
@@ -229,17 +263,17 @@ function reviews(home, { older, newest }) {
   writeFileSync(path.join(home, 'tune.json'), JSON.stringify({ reviewReport: '~/reviews' }));
 }
 
-test('reviewReport: the newest report’s verdict is the first item, and warns unless CLEAN', () => withHome((home) => {
+test('reviewReport: the newest report’s verdict is the first item, a skip unless CLEAN; clean settings stay exit 0, done', () => withHome((home) => {
   project(home, 'tidy', CLEAN);
   reviews(home, { older: 'CLEAN', newest: 'CHANGES RECOMMENDED' });
   const r = run(home, ['--brief', '--config', 'tune.json', 'tidy']);
   assert.deepEqual(lines(r.stdout), [
-    '⚠ warn   latest review: CHANGES RECOMMENDED     ~/reviews/2026-09-29.md  (address its recommendations alongside this tune)',
+    '• skip   latest review: CHANGES RECOMMENDED     ~/reviews/2026-09-29.md  (address its recommendations alongside this tune)',
     '✓ ok     clean (1 allow, 1 deny)                ~/tidy',
-    'summary: ok=1 warn=1 skip=0 refuse=0 fail=0',
-    'next: ask  (propose edits for the 1 finding to the user; change nothing until they approve)',
+    'summary: ok=1 warn=0 skip=1 refuse=0 fail=0',
+    'next: done  (settings clean; latest harness review is CHANGES RECOMMENDED: surface its recommendations to the user)',
   ]);
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 0);
 }));
 
 test('reviewReport: a CLEAN latest review is ok and leaves a clean run at exit 0', () => withHome((home) => {
@@ -247,7 +281,31 @@ test('reviewReport: a CLEAN latest review is ok and leaves a clean run at exit 0
   reviews(home, { older: 'BLOCKING', newest: 'CLEAN' });
   const r = run(home, ['--brief', '--config', 'tune.json', 'tidy']);
   assert.equal(lines(r.stdout)[0], '✓ ok     latest review: CLEAN                   ~/reviews/2026-09-29.md');
+  assert.equal(lines(r.stdout).at(-1), 'next: done  (clean: no edits to propose)');
   assert.equal(r.status, 0);
+}));
+
+test('reviewReport: settings findings with a non-CLEAN review exit 1, ask about the settings findings', () => withHome((home) => {
+  project(home, 'every', EVERY);
+  reviews(home, { older: 'CLEAN', newest: 'BLOCKING' });
+  const r = run(home, ['--brief', '--config', 'tune.json', 'every']);
+  assert.match(lines(r.stdout)[0], /^• skip {3}latest review: BLOCKING /);
+  assert.equal(lines(r.stdout).at(-1), 'next: ask  (propose edits for the 6 settings findings to the user; change nothing until they approve)');
+  assert.equal(r.status, 1);
+}));
+
+test('an unknown check label is an internal error, never reported clean', () => withHome((home) => {
+  project(home, 'tidy', CLEAN);
+  // A copy of the linter whose clean item carries a label verdict() does not know.
+  const source = readFileSync(LINT, 'utf8');
+  const bogus = source.replace("items.push(makeItem({ ...at, check: 'clean',", "items.push(makeItem({ ...at, check: 'bogus',");
+  assert.notEqual(bogus, source);
+  const script = path.join(home, 'lint.mjs');
+  writeFileSync(script, bogus);
+  const r = run(home, ['--brief', 'tidy'], { script });
+  assert.equal(r.status, 3);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /unknown check label "bogus"/);
 }));
 
 test('reviewReport: nothing readable there adds no item, as before', () => withHome((home) => {

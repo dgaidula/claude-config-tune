@@ -25,6 +25,11 @@ REPORTS — it never edits.
 node <skill-dir>/lint.mjs --brief <project-dir-or-settings.json>...
 ```
 
+For the global settings, pass the two files by name:
+`node <skill-dir>/lint.mjs --brief ~/.claude/settings.json ~/.claude/settings.local.json`.
+A bare `~/.claude` is read as a project dir, so it looks for
+`~/.claude/.claude/settings.local.json` and refuses.
+
 Pass 2+ projects to also run the cross-project drift check. `--brief` prints
 one line per item — verdict, finding, the project it is in, and a
 parenthesised reason for anything not `ok` — then a `summary:` line and a
@@ -34,15 +39,19 @@ finding’s specifics, such as the entries a consolidation would replace, or
 the files a drift entry is in and missing from.
 
 - **Verdicts.** `fail` is a definite finding (superseded, redundant) or a
-  settings file that cannot be read; `warn` is advisory; `skip` is a
-  sensitive server deliberately left enumerated; `refuse` is a path with no
-  settings file; `ok` is a clean file (or a CLEAN review).
-- **Exit code.** `0` clean, `1` findings, `2` usage error, `3` the config
+  settings file that cannot be read (or whose permission lists are not
+  arrays of strings); `warn` is advisory; `skip` is a sensitive server
+  deliberately left enumerated, or a review that is not CLEAN; `refuse` is a
+  path with no settings file; `ok` is a clean file (or a CLEAN review).
+- **Exit code.** `0` every settings item `ok` (a `skip` is not a
+  finding), `1` findings, `2` usage error, `3` the config
   could not be read. On `2` or `3` stdout is empty: report stderr and stop.
-- **`next:`** `done` means nothing to propose; `ask` means propose the edits
-  (below) and wait for the user; `stop` means a settings file is unreadable,
-  so report it. Quote the summary line and every non-`ok` line back as
-  printed.
+- **`next:`** `done` means every settings item is `ok`, so there is nothing
+  to propose (if it names a review that is not CLEAN, surface that review’s
+  recommendations to the user); `ask` means propose the edits (below) and
+  wait for the user, or, when a path had no settings file, re-run with the
+  right path; `stop` means a settings file is unreadable, so report it.
+  Quote the summary line and every non-`ok` line back as printed.
 
 Add `--config tune.json` to extend the defaults with your own site-specific
 patterns, sensitive servers, and dangerous-command guards (schema:
@@ -51,12 +60,14 @@ loaded without the flag. `--ci` is still accepted, and changes nothing.
 
 If the config sets **`reviewReport`** (a path to a prior review report, or a
 directory of dated ones), the run’s first item is that report’s latest
-**verdict** (`latest review: …`, `warn` unless CLEAN) — so a
+**verdict** (`latest review: …`, `skip` unless CLEAN) — so a
 `CHANGES RECOMMENDED` / `BLOCKING` review from an upstream check (e.g. a
 toolchain-update routine) gets addressed alongside the tune instead of
 sitting unread. Note config-tune’s own scope is the allow-list + CLAUDE.md; a
 report may recommend things beyond that (auto-mode, hooks, settings) —
-surface those to the user, don’t silently skip them.
+surface those to the user, don’t silently skip them. The review never makes
+the run fail: you are done when every settings item is `ok`, and the review
+item stays in the output until the next CLEAN review.
 
 What it flags:
 

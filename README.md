@@ -60,6 +60,15 @@ decision, not a hygiene win; the linter knows the difference.
 Extend the defaults (site-specific drift exclusions, your own sensitive
 servers, additional dangerous-glob guards) via `--config tune.json`, or put
 a `tune.json` beside `lint.mjs`. The schema is in `lint.mjs --help`.
+A config’s `reviewReport` (a prior review report, or a directory of dated
+ones) puts that review’s verdict first in the run: `ok` when CLEAN,
+otherwise `skip`, shown with its reason but never failing the run. You are
+done when every settings item is `ok`; the review item stays until the next
+CLEAN review.
+
+For your global settings, pass both files:
+`lint.mjs ~/.claude/settings.json ~/.claude/settings.local.json` (a bare
+`~/.claude` is read as a project dir and refuses).
 
 Tests: `npm test` (Node 20+, `node --test`, no dependencies).
 

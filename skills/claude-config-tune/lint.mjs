@@ -30,9 +30,11 @@
 //   drift         warn   an entry present in some files but not all, excluding
 //                        site-specific patterns (`clean` when the lists match)
 // From the config:
-//   review        ok or warn   the latest prior review's verdict, first in the
-//                        run: ok when it reads CLEAN, warn otherwise
-// A path with no settings file refuses; an unreadable or invalid one fails.
+//   review        ok or skip   the latest prior review's verdict, first in the
+//                        run: ok when it reads CLEAN, skip otherwise (shown
+//                        with its reason, but never a settings finding)
+// A path with no settings file refuses; an unreadable or invalid one fails, as
+// does one whose permissions.allow or .deny is not an array of strings.
 //
 // Output modes (all rendered from the same item objects, so they can never
 // disagree):
@@ -47,10 +49,12 @@
 //                        data carries `check` (the label above) and the
 //                        finding's specifics; a drift item's path is null.
 //   --quiet              The summary line only.
-//   Every text mode then ends with one `next:` line: `done` when clean, `ask`
-//   when there are findings (propose the edits; the user approves each one),
-//   `stop` when a settings file cannot be read. --json cannot be combined with
-//   --brief or --quiet.
+//   Every text mode then ends with one `next:` line: `done` when every
+//   settings item is ok (a non-CLEAN review is named there, to surface), `ask`
+//   when there are settings findings (propose the edits; the user approves each
+//   one) or a path has no settings file (re-run with the right path), `stop`
+//   when a settings file cannot be read. --json cannot be combined with --brief
+//   or --quiet.
 //
 // Flags:
 //   --config <file>   extend the defaults with a tune.json (below). Without it,
@@ -115,14 +119,17 @@ const DEFINITE_CHECKS = new Set(['superseded', 'redundant']);
 const ADVISORY_CHECKS = new Set(['consolidate', 'sensitive-*', 'one-off?', 'push-guard', 'drift']);
 
 // Facts on an item -> its verdict. Pure: reads item fields, returns a string.
+// An unknown label throws (exit 3) rather than passing as clean.
 function verdict(item) {
-  if (item.check === 'invalid-json' || item.check === 'unreadable') return 'fail';
+  if (item.check === 'invalid-json' || item.check === 'unreadable' || item.check === 'invalid') return 'fail';
   if (item.check === 'missing') return 'refuse';
   if (DEFINITE_CHECKS.has(item.check)) return 'fail';
   if (ADVISORY_CHECKS.has(item.check)) return 'warn';
-  if (item.check === 'review') return /^CLEAN\b/.test(item.reviewVerdict) ? 'ok' : 'warn';
+  // A non-CLEAN review is advisory context for the tune, not a settings finding.
+  if (item.check === 'review') return /^CLEAN\b/.test(item.reviewVerdict) ? 'ok' : 'skip';
   if (item.check === 'enumerated') return 'skip';
-  return 'ok'; // clean
+  if (item.check === 'clean') return 'ok';
+  throw new Error(`verdict(): unknown check label ${JSON.stringify(item.check)}`);
 }
 
 // One item: the label, where it is, what it says. `data` gets the label too,
@@ -211,9 +218,16 @@ function expandHome(p) {
   return p.startsWith('~') ? join(process.env.HOME ?? '', p.slice(1)) : p;
 }
 
-/** A path for display: $HOME as ~, and a project's settings.local.json as the project dir. */
+/**
+ * A path for display: $HOME as ~, and a project's settings.local.json as the
+ * project dir, except where that dir would be ~ itself: ~/.claude/settings.local.json
+ * is the global local file, so it is shown whole.
+ */
 const tilde = (f) => f.replace(process.env.HOME ?? '~', '~');
-const short = (f) => tilde(f).replace(/\/.claude\/settings\.local\.json$/, '');
+const short = (f) => {
+  const dir = tilde(f).replace(/\/.claude\/settings\.local\.json$/, '');
+  return dir === '~' || dir === '' ? tilde(f) : dir;
+};
 
 /**
  * Resolve `reviewReport` (a report file, or a directory of dated reports) to the
@@ -252,6 +266,16 @@ function lintFile(p, config) {
   } catch (e) {
     const check = e instanceof SyntaxError ? 'invalid-json' : 'unreadable';
     return { file, items: [makeItem({ ...at, check, summary: check === 'invalid-json' ? 'invalid JSON' : 'cannot read', reason: e.message })] };
+  }
+
+  // Valid JSON of the wrong shape fails like invalid JSON, naming the key.
+  for (const key of ['allow', 'deny']) {
+    const list = json?.permissions?.[key];
+    if (list == null) continue;
+    const i = Array.isArray(list) ? list.findIndex((e) => typeof e !== 'string') : -1;
+    const bad = !Array.isArray(list) ? `permissions.${key} is not an array`
+      : i >= 0 ? `permissions.${key}[${i}] is not a string` : null;
+    if (bad) return { file, items: [makeItem({ ...at, check: 'invalid', summary: 'invalid permissions', reason: bad })] };
   }
 
   const allow = json?.permissions?.allow ?? [];
@@ -401,13 +425,19 @@ const GO_ALIASES = [];
 // `run`. A settings file that cannot be read is beyond this tool's remedy:
 // `stop`. That is why a definite finding, though it fails, does not take the
 // runtime's default `stop`: a superseded entry is a finding to propose, not a
-// broken run.
+// broken run. A path with no settings file has nothing to edit: its remedy is
+// a different path. A non-CLEAN review (skip) never holds the run open.
 function nextAction({ items }) {
-  const unreadable = items.filter((it) => it.check === 'invalid-json' || it.check === 'unreadable');
+  const unreadable = items.filter((it) => it.check === 'invalid-json' || it.check === 'unreadable' || it.check === 'invalid');
   if (unreadable.length) return nextStep('stop', `cannot lint ${listNames(unreadable)}: fix the settings file, then run again`);
-  const s = summarize(items);
-  const findings = s.warn + s.refuse + s.fail;
-  if (findings) return nextStep('ask', `propose edits for the ${count(findings, 'finding')} to the user; change nothing until they approve`);
+  const findings = items.filter((it) => it.verdict === 'warn' || it.verdict === 'fail').length;
+  const missing = items.filter((it) => it.check === 'missing');
+  const where = missing.length && `no settings file at ${listNames(missing.map((it) => ({ name: tilde(it.path) })))}: re-run with a project dir or a settings .json file`;
+  if (findings && missing.length) return nextStep('ask', `propose edits for the ${count(findings, 'settings finding')}; ${where}`);
+  if (missing.length) return nextStep('ask', where);
+  if (findings) return nextStep('ask', `propose edits for the ${count(findings, 'settings finding')} to the user; change nothing until they approve`);
+  const review = items.find((it) => it.check === 'review' && it.verdict !== 'ok');
+  if (review) return nextStep('done', `settings clean; latest harness review is ${review.reviewVerdict}: surface its recommendations to the user`);
   return nextStep('done', 'clean: no edits to propose');
 }
 
