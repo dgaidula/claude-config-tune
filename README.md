@@ -23,21 +23,31 @@ problem, handled by different modes with different trust models.
 ## Mode 1 — the linter (deterministic, report-only)
 
 ```bash
-node skills/claude-config-tune/lint.mjs <project-dir>...
+node skills/claude-config-tune/lint.mjs <project-dir>...           # a report for a person
+node skills/claude-config-tune/lint.mjs --brief <project-dir>...   # one line per item, for an agent
+node skills/claude-config-tune/lint.mjs --json <project-dir>...    # one stable object, for a script
 ```
 
-Zero dependencies, never edits, CI-able (`--ci` fails only on *definite*
-issues, never advisory ones). What it flags:
+Zero dependencies, never edits. It follows the
+[`mjs-tool/2`](https://github.com/dgaidula/mjs-tool-skeleton) contract:
+human, `--brief`, `--json` and `--quiet` output rendered from one list of
+items, a closing `next:` line that says what to do next, and exit codes
+that mean the same thing every time: `0` clean, `1` any finding, `2` a usage
+error, `3` a config it could not read. Definite findings are `fail`,
+advisory ones `warn`. To fail CI on definite findings only, test
+`summary.fail` in the `--json` output. (`--ci`, from before the contract,
+is still accepted and changes nothing.) What it flags:
 
-| Finding | Meaning |
-|---|---|
-| `superseded` | A narrow `Bash(...)` entry already covered by a broader `Bash(X *)` glob |
-| `redundant` | An enumerated `mcp__server__tool` already covered by that server's `*` wildcard |
-| `consolidate` | 2+ enumerated tools on one server → suggest the wildcard |
-| `sensitive-*` | A wildcard on a **sensitive server** (gmail, slack, stripe, composio, …) — advisory: enumerate instead |
-| `one-off?` | A Bash entry that looks single-use (advisory — confirm before removing) |
-| `push-guard` | A broad dangerous glob (default `git *`) with no deny on its dangerous subcommand (`git push`) |
-| `drift` | Entries present in some of your projects but not all |
+| Finding | Verdict | Meaning |
+|---|---|---|
+| `superseded` | `fail` | A narrow `Bash(...)` entry already covered by a broader `Bash(X *)` glob |
+| `redundant` | `fail` | An enumerated `mcp__server__tool` already covered by that server’s `*` wildcard |
+| `consolidate` | `warn` | 2+ enumerated tools on one server: suggest the wildcard |
+| `sensitive-*` | `warn` | A wildcard on a **sensitive server** (gmail, slack, stripe, composio, …): enumerate instead |
+| `enumerated` | `skip` | 2+ enumerated tools on a sensitive server, deliberately left as they are |
+| `one-off?` | `warn` | A Bash entry that looks single-use (confirm before removing) |
+| `push-guard` | `warn` | A broad dangerous glob (default `git *`) with no deny on its dangerous subcommand (`git push`) |
+| `drift` | `warn` | Entries present in some of your projects but not all |
 
 **The sensitive-server guard is the part you won't find elsewhere.**
 Consolidating `mcp__gmail__search` + `mcp__gmail__get_message` into
@@ -48,8 +58,10 @@ flagged with enumeration as the fix. Widening permissions is a security
 decision, not a hygiene win; the linter knows the difference.
 
 Extend the defaults (site-specific drift exclusions, your own sensitive
-servers, additional dangerous-glob guards) via `--config tune.json` — schema
-in the header of `lint.mjs`.
+servers, additional dangerous-glob guards) via `--config tune.json`, or put
+a `tune.json` beside `lint.mjs`. The schema is in `lint.mjs --help`.
+
+Tests: `npm test` (Node 20+, `node --test`, no dependencies).
 
 ## Mode 2 — the CLAUDE.md review (advisory, measured, verified)
 

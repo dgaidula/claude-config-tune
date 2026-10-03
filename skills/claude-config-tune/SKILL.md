@@ -22,22 +22,41 @@ Run the linter against one or more project dirs (or settings files). It only
 REPORTS — it never edits.
 
 ```bash
-node <skill-dir>/lint.mjs <project-dir-or-settings.json>...
+node <skill-dir>/lint.mjs --brief <project-dir-or-settings.json>...
 ```
 
-Pass 2+ projects to also run the cross-project drift check. Add `--ci` to
-exit non-zero on a DEFINITE issue (superseded / redundant); advisory findings
-never fail. Add `--config tune.json` to extend the defaults with your own
-site-specific patterns, sensitive servers, and dangerous-command guards (see
-the header of `lint.mjs` for the schema).
+Pass 2+ projects to also run the cross-project drift check. `--brief` prints
+one line per item — verdict, finding, the project it is in, and a
+parenthesised reason for anything not `ok` — then a `summary:` line and a
+`next:` line. When you need the detail, run the same command with `--json`
+instead: each item’s `data` carries its check label (`data.check`) and the
+finding’s specifics, such as the entries a consolidation would replace, or
+the files a drift entry is in and missing from.
+
+- **Verdicts.** `fail` is a definite finding (superseded, redundant) or a
+  settings file that cannot be read; `warn` is advisory; `skip` is a
+  sensitive server deliberately left enumerated; `refuse` is a path with no
+  settings file; `ok` is a clean file (or a CLEAN review).
+- **Exit code.** `0` clean, `1` findings, `2` usage error, `3` the config
+  could not be read. On `2` or `3` stdout is empty: report stderr and stop.
+- **`next:`** `done` means nothing to propose; `ask` means propose the edits
+  (below) and wait for the user; `stop` means a settings file is unreadable,
+  so report it. Quote the summary line and every non-`ok` line back as
+  printed.
+
+Add `--config tune.json` to extend the defaults with your own site-specific
+patterns, sensitive servers, and dangerous-command guards (schema:
+`node <skill-dir>/lint.mjs --help`). A `tune.json` beside `lint.mjs` is
+loaded without the flag. `--ci` is still accepted, and changes nothing.
 
 If the config sets **`reviewReport`** (a path to a prior review report, or a
-directory of dated ones), the linter prints that report's latest **verdict** at
-the top of the run — so a `CHANGES RECOMMENDED` / `BLOCKING` review from an
-upstream check (e.g. a toolchain-update routine) gets addressed alongside the
-tune instead of sitting unread. Note config-tune's own scope is the allow-list
-+ CLAUDE.md; a report may recommend things beyond that (auto-mode, hooks,
-settings) — surface those to the user, don't silently skip them.
+directory of dated ones), the run’s first item is that report’s latest
+**verdict** (`latest review: …`, `warn` unless CLEAN) — so a
+`CHANGES RECOMMENDED` / `BLOCKING` review from an upstream check (e.g. a
+toolchain-update routine) gets addressed alongside the tune instead of
+sitting unread. Note config-tune’s own scope is the allow-list + CLAUDE.md; a
+report may recommend things beyond that (auto-mode, hooks, settings) —
+surface those to the user, don’t silently skip them.
 
 What it flags:
 
@@ -52,6 +71,8 @@ What it flags:
   auto-approves outward actions and any tool the server adds later.
 - **sensitive-\*** — an *existing* wildcard on a sensitive server, flagged
   advisory with enumeration as the suggested fix.
+- **enumerated** — that exception at work: a sensitive server’s tools left
+  enumerated (`skip`). Nothing to do.
 - **one-off?** — a non-glob Bash entry that looks single-use (a path,
   `sed -n`, a long quoted literal). **Advisory** — confirm with the user it
   won't recur before removing.
