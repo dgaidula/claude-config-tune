@@ -72,7 +72,9 @@ item stays in the output until the next CLEAN review.
 What it flags:
 
 - **superseded** — a narrow `Bash(...)` already covered by a broader
-  `Bash(X *)` glob → delete the narrow one.
+  `Bash(X *)` glob, or a narrow `Read(...)` / `Edit(...)` path rule
+  covered by the same tool’s `dir/**` (or the bare tool name) → delete
+  the narrow one.
 - **redundant** — an enumerated `mcp__server__tool` already covered by a
   `mcp__server__*` wildcard → delete it.
 - **consolidate** — 2+ enumerated tools on one server with no wildcard →

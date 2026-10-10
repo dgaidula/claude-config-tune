@@ -40,7 +40,7 @@ is still accepted and changes nothing.) What it flags:
 
 | Finding | Verdict | Meaning |
 |---|---|---|
-| `superseded` | `fail` | A narrow `Bash(...)` entry already covered by a broader `Bash(X *)` glob |
+| `superseded` | `fail` | A narrow `Bash(...)` entry already covered by a broader `Bash(X *)` glob, or a path rule (`Read`, `Edit`, `Write`, `NotebookEdit`) covered by the same tool’s `dir/**` rule or bare tool name (`~/` and `//$HOME/` compare as one) |
 | `redundant` | `fail` | An enumerated `mcp__server__tool` already covered by that server’s `*` wildcard |
 | `consolidate` | `warn` | 2+ enumerated tools on one server: suggest the wildcard |
 | `sensitive-*` | `warn` | A wildcard on a **sensitive server** (gmail, slack, stripe, composio, …): enumerate instead |

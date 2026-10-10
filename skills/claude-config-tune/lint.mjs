@@ -16,7 +16,9 @@
 //   drift check.
 //
 // Checks, per file, with the verdict each one gives:
-//   superseded    fail   a narrow Bash entry already covered by a broader `X *` glob
+//   superseded    fail   a narrow Bash entry already covered by a broader `X *` glob,
+//                        or a path rule (Read/Edit/Write/NotebookEdit) covered by the
+//                        same tool's `dir/**` or bare tool name (`~/` = `//$HOME/`)
 //   redundant     fail   an enumerated mcp tool already covered by `mcp__server__*`
 //   consolidate   warn   2+ enumerated tools on one server, and no wildcard
 //   sensitive-*   warn   a wildcard on a sensitive server (send/delete/payment-shaped
@@ -197,6 +199,28 @@ function covers(prefix, other) {
   return other === prefix || other.startsWith(prefix + ' ');
 }
 
+// Tools whose rule specifier is a gitignore-style path (`Read(//abs/**)`).
+const PATH_TOOLS = new Set(['Read', 'Edit', 'Write', 'NotebookEdit']);
+
+/** `Read(<path>)` -> { tool, path }; a bare `Read` -> { tool, path: null } (every path). Else null. */
+function pathRule(entry) {
+  if (PATH_TOOLS.has(entry)) return { tool: entry, path: null };
+  const m = entry.match(/^(\w+)\((.*)\)$/s);
+  if (!m || !PATH_TOOLS.has(m[1])) return null;
+  // `~/x` and `//$HOME/x` name the same place; compare them in the `//` form.
+  const home = (process.env.HOME ?? '').replace(/^\/+|\/+$/g, '');
+  const path = home && m[2].startsWith('~/') ? `//${home}/${m[2].slice(2)}` : m[2];
+  return { tool: m[1], path };
+}
+
+/** Does path rule `g` cover `other` (same tool)? A bare tool covers every path; `X/**` covers anything under X. */
+function pathCovers(g, other) {
+  if (g.tool !== other.tool) return false;
+  if (g.path === null) return other.path !== null;
+  if (other.path === null || !g.path.endsWith('/**')) return false;
+  return other.path.startsWith(g.path.slice(0, -2));
+}
+
 function looksOneOff(inner) {
   return (
     /\//.test(inner) || // a path
@@ -291,6 +315,15 @@ function lintFile(p, config) {
     if (covering) {
       findings.superseded.push({ entry: a.entry, by: covering.entry });
     }
+  }
+
+  // --- 1b. superseded path rules (Read/Edit/...) ----------------------------
+  const pathRules = allow.map((e) => ({ entry: e, ...pathRule(e) })).filter((x) => x.tool);
+  // Two rules for the same place (`~/x/**`, `//$HOME/x/**`) cover each other;
+  // only the later one is flagged, so the fix never deletes both.
+  for (const [i, a] of pathRules.entries()) {
+    const covering = pathRules.find((g, j) => g.entry !== a.entry && pathCovers(g, a) && !(pathCovers(a, g) && i < j));
+    if (covering) findings.superseded.push({ entry: a.entry, by: covering.entry });
   }
 
   // --- 2 + 3. mcp wildcard opportunities, sensitive-server guard ------------

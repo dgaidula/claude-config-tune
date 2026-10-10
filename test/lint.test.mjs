@@ -140,6 +140,39 @@ test('a clean project: one ok item, exit 0, next done', () => withHome((home) =>
   assert.equal(r.status, 0);
 }));
 
+test('path rules: a `dir/**` or bare tool supersedes the same tool’s narrower rules; `~/` matches `//$HOME/`', () => withHome((home) => {
+  project(home, 'paths', {
+    allow: [
+      `Read(/${home}/.claude/**)`, // covered by ~/** once ~ is expanded
+      `Read(/${home}/.claude/projects/**)`,
+      'Read(~/**)',
+      'Edit(//srv/app/**)', 'Edit(//srv/app/src/x.js)', 'Edit(//srv/application/y.js)', // the last is a sibling, not under app/
+      'Read(//srv/app/src/x.js)', // Edit(//srv/app/**) does not cover Read
+      'Write', 'Write(//tmp/out.txt)',
+      'Read(~/dup/**)', `Read(/${home}/dup/**)`, // the same place twice: only the later is flagged
+    ],
+    deny: [],
+  });
+  const r = run(home, ['--json', 'paths']);
+  const found = JSON.parse(r.stdout).items.filter((i) => i.data.check === 'superseded').map((i) => [i.data.entry, i.data.by]);
+  assert.deepEqual(found, [
+    [`Read(/${home}/.claude/**)`, 'Read(~/**)'],
+    [`Read(/${home}/.claude/projects/**)`, `Read(/${home}/.claude/**)`], // the first covering rule in list order
+    ['Edit(//srv/app/src/x.js)', 'Edit(//srv/app/**)'],
+    ['Write(//tmp/out.txt)', 'Write'],
+    ['Read(~/dup/**)', 'Read(~/**)'],
+    [`Read(/${home}/dup/**)`, 'Read(~/**)'],
+  ]);
+  assert.equal(r.status, 1);
+}));
+
+test('path rules: two rules for the same place flag only the later one', () => withHome((home) => {
+  project(home, 'dup', { allow: ['Read(~/dup/**)', `Read(/${home}/dup/**)`], deny: [] });
+  const r = run(home, ['--json', 'dup']);
+  const found = JSON.parse(r.stdout).items.filter((i) => i.data.check === 'superseded').map((i) => i.data.entry);
+  assert.deepEqual(found, [`Read(/${home}/dup/**)`]);
+}));
+
 test('a path with no settings file refuses; invalid JSON fails and next is stop', () => withHome((home) => {
   mkdirSync(path.join(home, 'bad', '.claude'), { recursive: true });
   writeFileSync(path.join(home, 'bad', '.claude', 'settings.local.json'), '{"permissions":');
