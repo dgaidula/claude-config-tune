@@ -92,7 +92,9 @@ What it flags:
 - **push-guard** — a broad dangerous glob (default: `Bash(git *)`) with no
   deny shadowing its dangerous subcommand (`git push`).
 - **drift** — allow/deny entries present in some projects but not all,
-  excluding configured site-specific patterns.
+  excluding configured site-specific patterns. A `settings.json` and a
+  `settings.local.json` in one directory are layers Claude Code merges, so
+  they count as one scope (their union); the global pair alone has no drift.
 
 After reporting, **propose** the concrete edits and let the user approve
 before touching any file. Apply the removals/wildcards/denies, then re-run

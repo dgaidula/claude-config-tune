@@ -30,7 +30,9 @@
 //   clean         ok     a file with none of the above
 // Across files (two or more paths):
 //   drift         warn   an entry present in some files but not all, excluding
-//                        site-specific patterns (`clean` when the lists match)
+//                        site-specific patterns (`clean` when the lists match);
+//                        settings.json and settings.local.json in one directory
+//                        are layers of one scope, compared as their union
 // From the config:
 //   review        ok or skip   the latest prior review's verdict, first in the
 //                        run: ok when it reads CLEAN, skip otherwise (shown
@@ -92,7 +94,7 @@
 //       invalid, or an internal error.
 
 import { existsSync, readFileSync, statSync, readdirSync } from 'node:fs';
-import { join, resolve, dirname } from 'node:path';
+import { basename, join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -404,30 +406,46 @@ function lintFile(p, config) {
 }
 
 /** --- 6. cross-file drift: one item per entry not in every file, or one clean item. */
+// settings.json and settings.local.json in one directory are layers of one
+// scope that Claude Code merges, not two projects, so drift compares their union.
+const LAYERED = new Set(['settings.json', 'settings.local.json']);
+
 function driftItems(linted, config) {
-  const good = linted.filter((r) => r.allow);
-  if (good.length < 2) return [];
-  const sets = good.map((r) => ({ file: r.file, allow: new Set(r.allow), deny: new Set(r.deny) }));
+  const scopes = new Map();
+  for (const r of linted.filter((x) => x.allow)) {
+    const key = LAYERED.has(basename(r.file)) ? dirname(r.file) : r.file;
+    const s = scopes.get(key) ?? { key, files: [], allow: new Set(), deny: new Set() };
+    if (s.files.includes(r.file)) continue;
+    s.files.push(r.file);
+    r.allow.forEach((e) => s.allow.add(e));
+    r.deny.forEach((e) => s.deny.add(e));
+    scopes.set(key, s);
+  }
+  if (scopes.size < 2) return [];
+  const sets = [...scopes.values()].map((s) => ({
+    ...s,
+    name: s.files.length === 1 ? short(s.files[0]) : `${tilde(s.key)}/{${s.files.map((f) => basename(f)).join(',')}}`,
+  }));
   const union = (key) => new Set(sets.flatMap((s) => [...s[key]]));
   const mismatch = (key) => {
     const out = [];
     for (const entry of union(key)) {
       if (config.siteSpecific.some((re) => re.test(entry))) continue;
-      const present = sets.filter((s) => s[key].has(entry)).map((s) => s.file);
-      if (present.length !== sets.length) out.push({ list: key, entry, present, missing: sets.filter((s) => !s[key].has(entry)).map((s) => s.file) });
+      const present = sets.filter((s) => s[key].has(entry));
+      if (present.length !== sets.length) out.push({ list: key, entry, present, missing: sets.filter((s) => !s[key].has(entry)) });
     }
     return out;
   };
   const drift = [...mismatch('allow'), ...mismatch('deny')];
   const at = { path: null, name: 'cross-project' };
   if (drift.length === 0) {
-    return [makeItem({ ...at, check: 'clean', summary: 'allow/deny lists match', reason: 'site-specific entries ignored', data: { files: sets.map((s) => s.file) } })];
+    return [makeItem({ ...at, check: 'clean', summary: 'allow/deny lists match', reason: 'site-specific entries ignored', data: { files: sets.flatMap((s) => s.files) } })];
   }
   return drift.map((d) => makeItem({
     ...at, check: 'drift', summary: `${d.list} drift ${d.entry}`,
-    reason: `missing from ${d.missing.map(short).join(', ')}`,
-    lines: [`present in ${d.present.map(short).join(', ')}`],
-    data: { list: d.list, entry: d.entry, present: d.present, missing: d.missing },
+    reason: `missing from ${d.missing.map((s) => s.name).join(', ')}`,
+    lines: [`present in ${d.present.map((s) => s.name).join(', ')}`],
+    data: { list: d.list, entry: d.entry, present: d.present.flatMap((s) => s.files), missing: d.missing.flatMap((s) => s.files) },
   }));
 }
 

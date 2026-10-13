@@ -215,9 +215,11 @@ test('the global local settings file is shown whole, never as a bare ~', () => w
   mkdirSync(path.join(home, '.claude'));
   writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls *)', 'Bash(npm test)'], deny: [] } }));
   writeFileSync(path.join(home, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ls *)'], deny: [] } }));
+  project(home, 'other', { allow: ['Bash(ls *)', 'Bash(npm test)'], deny: [] });
   const r = run(home, ['--brief', '.claude/settings.json', '.claude/settings.local.json']);
   assert.match(r.stdout, /^✓ ok {5}clean \(1 allow, 0 deny\) {16}~\/\.claude\/settings\.local\.json$/m);
-  assert.match(r.stdout, /\(missing from ~\/\.claude\/settings\.local\.json\)$/m);
+  const alone = run(home, ['--brief', '.claude/settings.local.json', 'other']);
+  assert.match(alone.stdout, /\(missing from ~\/\.claude\/settings\.local\.json\)$/m);
 }));
 
 test('--ci is still accepted, and changes nothing', () => withHome((home) => {
@@ -275,7 +277,27 @@ test('a tune.json beside the script is auto-loaded with no --config', () => with
   assert.equal(tunedTools.status, 0);
 }));
 
-test('an explicit --config wins over the tune.json beside the script', () => withHome((home) => {
+test('drift: settings.json and settings.local.json in one dir are one layered scope, compared as their union', () => withHome((home) => {
+  // Global pair: each layer lacks what the other holds, which is how layering is meant to work.
+  mkdirSync(path.join(home, '.claude'));
+  writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(ls *)'], deny: ['Bash(git push *)'] } }));
+  writeFileSync(path.join(home, '.claude', 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ddev *)'] } }));
+  const pair = run(home, ['--brief', '.claude/settings.json', '.claude/settings.local.json']);
+  assert.doesNotMatch(pair.stdout, /drift|cross-project/);
+  assert.equal(pair.status, 0);
+
+  // The merged scope against a real second project: only the union's differences drift.
+  project(home, 'other', { allow: ['Bash(ls *)', 'Bash(ddev *)'], deny: [] });
+  const r = run(home, ['--json', '.claude/settings.json', '.claude/settings.local.json', 'other']);
+  const drift = JSON.parse(r.stdout).items.filter((i) => i.data.check === 'drift');
+  assert.deepEqual(drift.map((i) => [i.summary, i.reason]), [
+    ['deny drift Bash(git push *)', 'missing from ~/other'],
+  ]);
+  assert.match(run(home, ['.claude/settings.json', '.claude/settings.local.json', 'other']).stdout, /present in ~\/\.claude\/\{settings\.json,settings\.local\.json\}/);
+  assert.deepEqual(drift[0].data.present, [path.join(home, '.claude', 'settings.json'), path.join(home, '.claude', 'settings.local.json')]);
+}));
+
+test('an explicit --config wins over the tune.json beside the script',() => withHome((home) => {
   project(home, 'site-a', { allow: ['Bash(deploy-a *)'], deny: [] });
   project(home, 'site-b', { allow: ['Bash(deploy-b *)'], deny: [] });
   const script = deployWithTune(home, { siteSpecific: ['^Bash\\(deploy-'] });

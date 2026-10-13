@@ -47,7 +47,7 @@ is still accepted and changes nothing.) What it flags:
 | `enumerated` | `skip` | 2+ enumerated tools on a sensitive server, deliberately left as they are |
 | `one-off?` | `warn` | A Bash entry that looks single-use (confirm before removing) |
 | `push-guard` | `warn` | A broad dangerous glob (default `git *`) with no deny on its dangerous subcommand (`git push`) |
-| `drift` | `warn` | Entries present in some of your projects but not all |
+| `drift` | `warn` | Entries present in some of your projects but not all (a `settings.json` + `settings.local.json` pair in one directory counts as one merged scope) |
 
 **The sensitive-server guard is the part you won't find elsewhere.**
 Consolidating `mcp__gmail__search` + `mcp__gmail__get_message` into
