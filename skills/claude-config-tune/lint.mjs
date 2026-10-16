@@ -76,6 +76,7 @@
 //   {
 //     "siteSpecific":     ["regex", ...],   // entries EXPECTED to differ across projects
 //     "sensitiveServers": ["regex", ...],   // MCP servers never to wildcard-consolidate
+//                                           // (matched case-insensitively)
 //     "pushGuards": [{ "glob": "git", "requireDenyPrefix": "git push", "why": "..." }],
 //     "reviewReport":     "path or dir"     // a prior review report (or a dir of dated
 //                                           // ones); its latest verdict is the first
@@ -110,8 +111,9 @@ const DEFAULT_PUSH_GUARDS = [
 
 // MCP servers with send/delete/payment-shaped tools. Consolidating these to a
 // `mcp__server__*` wildcard would silently auto-approve outward or destructive
-// actions (and any tool the server adds later).
-const DEFAULT_SENSITIVE_SERVERS = [/gmail/, /google-workspace/, /composio/, /slack/, /stripe/, /twilio/, /sendgrid/, /mail/];
+// actions (and any tool the server adds later). Matched case-insensitively:
+// hosted connectors carry capitalised names such as `claude_ai_Composio`.
+const DEFAULT_SENSITIVE_SERVERS = [/gmail/i, /google-workspace/i, /composio/i, /slack/i, /stripe/i, /twilio/i, /sendgrid/i, /mail/i];
 
 // ---- verdict semantics (the single source of truth) -------------------------
 //
@@ -165,7 +167,7 @@ function loadConfig(configPath) {
   try {
     const cfg = JSON.parse(readFileSync(resolve(configPath), 'utf8'));
     for (const s of cfg.siteSpecific ?? []) config.siteSpecific.push(new RegExp(s));
-    for (const s of cfg.sensitiveServers ?? []) config.sensitiveServers.push(new RegExp(s));
+    for (const s of cfg.sensitiveServers ?? []) config.sensitiveServers.push(new RegExp(s, 'i'));
     for (const g of cfg.pushGuards ?? []) config.pushGuards.push(g);
     config.reviewReport = cfg.reviewReport ?? null;
   } catch (e) {

@@ -277,6 +277,18 @@ test('a tune.json beside the script is auto-loaded with no --config', () => with
   assert.equal(tunedTools.status, 0);
 }));
 
+test('sensitive servers match case-insensitively, defaults and tune.json alike', () => withHome((home) => {
+  project(home, 'hosted', { allow: ['mcp__claude_ai_Composio__COMPOSIO_SEARCH_TOOLS', 'mcp__claude_ai_Composio__COMPOSIO_GET_TOOL_SCHEMAS'], deny: [] });
+  const r = run(home, ['--brief', 'hosted']);
+  assert.match(r.stdout, /^• skip {3}enumerated 2 claude_ai_Composio tools/m);
+  assert.doesNotMatch(r.stdout, /consolidate/);
+  assert.equal(r.status, 0);
+
+  project(home, 'tools', { allow: ['mcp__Linear__list_issues', 'mcp__Linear__get_issue'], deny: [] });
+  const script = deployWithTune(home, { sensitiveServers: ['^linear$'] });
+  assert.match(run(home, ['--brief', 'tools'], { script }).stdout, /^• skip {3}enumerated 2 Linear tools/m);
+}));
+
 test('drift: settings.json and settings.local.json in one dir are one layered scope, compared as their union', () => withHome((home) => {
   // Global pair: each layer lacks what the other holds, which is how layering is meant to work.
   mkdirSync(path.join(home, '.claude'));
